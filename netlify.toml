@@ -1,0 +1,7 @@
+# Netlify Configuration for TanStack Start & Nitro
+[build]
+  command = "npm run build"
+  publish = ".output/public"
+
+[build.environment]
+  NITRO_PRESET = "netlify"
