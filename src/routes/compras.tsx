@@ -77,13 +77,18 @@ function ComprasComponent() {
   };
 
   const agregarLinea = () => {
-    const primerInv = inventario[0]!;
+    const seleccionadosIds = itemsCompra.map((it) => it.inventario_id);
+    const disponible = inventario.find((i) => !seleccionadosIds.includes(i.inventario_id));
+    if (!disponible) {
+      alert("Ya has agregado todos los ítems de inventario disponibles a esta compra.");
+      return;
+    }
     setItemsCompra([
       ...itemsCompra,
       {
-        inventario_id: primerInv.inventario_id,
+        inventario_id: disponible.inventario_id,
         cantidad: 1,
-        costo_unitario: primerInv.monto_compra_prom,
+        costo_unitario: disponible.monto_compra_prom,
         seriales: [""],
       },
     ]);
@@ -422,11 +427,13 @@ function ComprasComponent() {
                           value={it.inventario_id}
                           onChange={(e) => actualizarLinea(idx, "inventario_id", e.target.value)}
                         >
-                          {inventario.map((i) => (
-                            <option key={i.inventario_id} value={i.inventario_id}>
-                              {i.sku} · {i.nombre} ({i.tipo})
-                            </option>
-                          ))}
+                          {inventario
+                            .filter((i) => i.inventario_id === it.inventario_id || !itemsCompra.some((other, oIdx) => oIdx !== idx && other.inventario_id === i.inventario_id))
+                            .map((i) => (
+                              <option key={i.inventario_id} value={i.inventario_id}>
+                                {i.sku} · {i.nombre} ({i.tipo})
+                              </option>
+                            ))}
                         </select>
                       </Field>
 

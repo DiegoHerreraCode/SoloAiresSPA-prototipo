@@ -277,7 +277,7 @@ function Finanzas() {
           </div>
         </Card>
 
-        {/* Panel lateral: Inventario y "Caballos Ganadores" */}
+        {/* Panel lateral: Inventario y "Productos Top" */}
         <div className="space-y-4">
           {/* Valor del Inventario */}
           <Card className="p-4 shadow-sm">
@@ -291,11 +291,11 @@ function Finanzas() {
             </p>
           </Card>
 
-          {/* Caballos Ganadores */}
+          {/* Productos Top */}
           <Card className="p-4 shadow-sm border-amber-500/30 bg-amber-500/5">
             <div className="flex items-center gap-2 border-b border-border pb-2.5">
               <Award className="h-4 w-4 text-amber-600" />
-              <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Caballos Ganadores del Negocio</p>
+              <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Productos Top del Negocio</p>
             </div>
 
             <div className="mt-3 space-y-3">
@@ -309,7 +309,7 @@ function Finanzas() {
               </div>
 
               <div className="rounded-md border border-border bg-card p-2.5">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground">Repuesto estrella (mayor margen):</span>
+                <span className="text-[10px] uppercase font-bold text-muted-foreground">Repuesto líder (mayor margen):</span>
                 <p className="text-xs font-bold text-foreground mt-0.5">{repuestoMasVendido.nombre}</p>
                 <div className="flex justify-between items-center text-[11px] text-muted-foreground mt-1">
                   <span>{repuestoMasVendido.unidades} unid. vendidas</span>

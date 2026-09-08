@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Plus, Trash2, CheckCircle2, Wrench, Package, Calendar, Users, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, Wrench, Package, Calendar, Users, ArrowLeft, Save } from "lucide-react";
 import { AppLayout, Card, Field, btnGhost, btnPrimary, inputCls } from "@/components/app/AppLayout";
 import { StatusPill } from "@/components/app/StatusPill";
 import {
@@ -122,8 +122,45 @@ function TallerComponent() {
     );
   };
 
-  // Finalizar este repuesto
+  // Guardar avance progresivo de servicios e insumos sin finalizar la reparación
+  const guardarAvanceReparacion = () => {
+    // 1. Persistir servicios asignados
+    // Remover los anteriores de esta reparación y agregar los actuales
+    for (let i = reparaciones_servicios.length - 1; i >= 0; i--) {
+      if (reparaciones_servicios[i]!.reparacion_id === reparacionActivaId) {
+        reparaciones_servicios.splice(i, 1);
+      }
+    }
+    reparaciones_servicios.push(...serviciosAsignados);
+
+    // 2. Persistir insumos consumidos
+    for (let i = reparaciones_insumos.length - 1; i >= 0; i--) {
+      if (reparaciones_insumos[i]!.reparacion_id === reparacionActivaId) {
+        reparaciones_insumos.splice(i, 1);
+      }
+    }
+    reparaciones_insumos.push(...insumosConsumidos);
+
+    // 3. Actualizar costos acumulados en el registro de reparación manteniéndola en proceso/pendiente
+    rep.costo_servicios = costoServicios;
+    rep.costo_insumos = costoInsumos;
+    rep.costo_total = costoTotal;
+    if (rep.estado === "pendiente") {
+      rep.estado = "en proceso";
+    }
+
+    if (repuesto) {
+      repuesto.costo_reparacion = costoTotal;
+      repuesto.costo_total = costoTotal;
+    }
+
+    alert(`¡Avance guardado con éxito para el repuesto #${repuesto?.serial || rep.repuesto_id}! La reparación sigue en curso.`);
+  };
+
+  // Finalizar la reparación de este repuesto
   const finalizarReparacionRepuesto = () => {
+    guardarAvanceReparacion();
+
     rep.estado = "finalizada";
     rep.fecha_fin = new Date().toISOString().slice(0, 10);
     rep.costo_servicios = costoServicios;
@@ -154,7 +191,7 @@ function TallerComponent() {
       servicioCliente.monto_total = servicioCliente.monto_subtotal + servicioCliente.monto_iva;
     }
 
-    alert(`¡Repuesto #${repuesto?.serial || rep.repuesto_id} marcado como REPARADO!`);
+    alert(`¡Repuesto #${repuesto?.serial || rep.repuesto_id} marcado como FINALIZADO y listo para entrega!`);
     cambiarRepuestoActivo(reparacionActivaId);
   };
 
@@ -218,7 +255,7 @@ function TallerComponent() {
                     : "bg-muted/40 hover:bg-muted text-foreground border-border/60"
                 }`}
               >
-                <span>Pieza {idx + 1}: {repObj?.serial || `ID ${rId}`}</span>
+                <span>Repuesto {idx + 1}: {repObj?.serial || `ID ${rId}`}</span>
                 {esFinalizado ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
                 ) : (
@@ -379,14 +416,14 @@ function TallerComponent() {
             </div>
           </Card>
 
-          {/* Card: Insumos y Repuestos Consumidos Día a Día */}
+          {/* Card: Insumos Consumidos Día a Día (Solo Insumos, NO repuestos) */}
           <Card>
             <div className="flex items-center justify-between border-b border-border px-4 py-3 bg-muted/20">
               <div className="flex items-center gap-2">
                 <Package className="h-4 w-4 text-amber-600" />
                 <div>
-                  <p className="text-sm font-semibold">Insumos y Repuestos Consumidos</p>
-                  <p className="text-[11px] text-muted-foreground">Materiales de inventario cargados progresivamente</p>
+                  <p className="text-sm font-semibold">Insumos Consumidos</p>
+                  <p className="text-[11px] text-muted-foreground">Materiales e insumos de inventario cargados progresivamente (no repuestos)</p>
                 </div>
               </div>
               <button
@@ -447,11 +484,13 @@ function TallerComponent() {
                             );
                           }}
                         >
-                          {inventario.map((inv) => (
-                            <option key={inv.inventario_id} value={inv.inventario_id}>
-                              {inv.sku} · {inv.nombre} ({clp(inv.monto_compra_prom)})
-                            </option>
-                          ))}
+                          {inventario
+                            .filter((inv) => inv.tipo === "insumo")
+                            .map((inv) => (
+                              <option key={inv.inventario_id} value={inv.inventario_id}>
+                                {inv.sku} · {inv.nombre} ({clp(inv.monto_compra_prom)})
+                              </option>
+                            ))}
                         </select>
                       </td>
                       <td className="px-3 py-2 text-right">
@@ -547,12 +586,20 @@ function TallerComponent() {
           </dl>
 
           {rep.estado !== "finalizada" ? (
-            <button
-              className={`${btnPrimary} w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 font-semibold gap-2`}
-              onClick={finalizarReparacionRepuesto}
-            >
-              <CheckCircle2 className="h-4 w-4" /> Finalizar reparación de este repuesto
-            </button>
+            <div className="space-y-2.5">
+              <button
+                className={`${btnPrimary} w-full py-2.5 bg-primary hover:bg-primary/90 font-semibold gap-2 justify-center`}
+                onClick={guardarAvanceReparacion}
+              >
+                <Save className="h-4 w-4" /> Guardar avance de este repuesto
+              </button>
+              <button
+                className={`${btnPrimary} w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 font-semibold gap-2 justify-center`}
+                onClick={finalizarReparacionRepuesto}
+              >
+                <CheckCircle2 className="h-4 w-4" /> Finalizar reparación de este repuesto
+              </button>
+            </div>
           ) : (
             <div className="rounded-md bg-emerald-50 border border-emerald-200 p-2.5 text-center text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300">
               ✓ Repuesto reparado y finalizado
@@ -560,8 +607,8 @@ function TallerComponent() {
           )}
 
           <div className="border-t border-border pt-3">
-            <p className="text-[11px] text-muted-foreground text-center">
-              Una vez finalizados todos los repuestos de la orden, el cobro se habilitará automáticamente en la tabla general de servicios.
+            <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
+              Puedes guardar avances progresivos las veces que sea necesario. Una vez finalizados todos los repuestos, se habilitará el cobro general.
             </p>
           </div>
         </Card>

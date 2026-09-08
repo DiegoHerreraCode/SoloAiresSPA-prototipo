@@ -55,9 +55,12 @@ function RecambioView() {
     ? modelos.filter((m) => m.marca_id === Number(filtroMarca))
     : modelos;
 
-  // Repuestos salientes disponibles filtrados
+  // Repuestos salientes disponibles filtrados (excluyendo los ya añadidos a alguna línea)
   const repuestosDisponibles = repuestos.filter((r) => {
     if (r.propietario || !r.existe) return false;
+    // No permitir volver a seleccionar un repuesto ya agregado a una línea de este recambio
+    if (lineas.some((l) => l.repuesto_saliente_id === r.repuesto_id)) return false;
+
     const inv = inventario.find((i) => i.inventario_id === r.inventario_id);
     if (!inv) return false;
     const mo = modelos.find((m) => m.modelo_id === inv.modelo_id);
@@ -172,7 +175,7 @@ function RecambioView() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-foreground">1. Repuesto Saliente (Stock de Solo Aire SPA)</p>
-                <p className="text-xs text-muted-foreground">Pieza entregada al cliente</p>
+                <p className="text-xs text-muted-foreground">Repuesto entregado al cliente</p>
               </div>
             </div>
 
@@ -325,10 +328,28 @@ function RecambioView() {
             </p>
             <button
               className={btnPrimary}
-              disabled={!draft.serial_entrante.trim()}
+              disabled={!draft.serial_entrante.trim() || repuestosDisponibles.length === 0}
               onClick={() => {
-                setLineas([...lineas, draft]);
-                setDraft({ ...draft, serial_entrante: "" });
+                const nuevasLineas = [...lineas, draft];
+                setLineas(nuevasLineas);
+                
+                // Encontrar el siguiente repuesto disponible
+                const siguiente = repuestos.find(
+                  (r) => !r.propietario && r.existe && !nuevasLineas.some((l) => l.repuesto_saliente_id === r.repuesto_id)
+                );
+                if (siguiente) {
+                  const invSig = inventario.find((i) => i.inventario_id === siguiente.inventario_id) || primerInv;
+                  setDraft({
+                    ...draft,
+                    repuesto_saliente_id: siguiente.repuesto_id,
+                    inventario_saliente_id: invSig.inventario_id,
+                    costo_saliente: siguiente.costo_adquisicion || invSig.monto_compra_prom,
+                    precio_saliente: siguiente.monto_venta || invSig.monto_venta_unitario,
+                    serial_entrante: "",
+                  });
+                } else {
+                  setDraft({ ...draft, serial_entrante: "" });
+                }
               }}
             >
               Agregar al recambio

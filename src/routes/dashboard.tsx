@@ -51,7 +51,16 @@ function Metric({ label, value, hint, badge }: { label: string; value: string; h
 }
 
 function Dashboard() {
-  const ingresos = servicios_clientes.reduce((s, x) => s + x.monto_total, 0);
+  const ahora = new Date();
+  const anioMesActual = ahora.toISOString().slice(0, 7); // "YYYY-MM"
+  const nombreMesActual = ahora.toLocaleDateString("es-CL", { month: "long" });
+  const nombreMesCap = nombreMesActual.charAt(0).toUpperCase() + nombreMesActual.slice(1);
+
+  // Ingresos totales del mes actual
+  const ingresosMesActual = servicios_clientes
+    .filter((s) => s.fecha.startsWith(anioMesActual))
+    .reduce((s, x) => s + x.monto_total, 0);
+
   const activas = reparaciones.filter((r) => r.estado !== "finalizada").length;
   const deuda = compras.reduce((s, c) => s + c.monto_pendiente, 0);
   const bajoStock = inventario.filter((i) => i.cantidad_total <= i.stock_minimo);
@@ -62,7 +71,12 @@ function Dashboard() {
       description="Resumen operativo y comercial en tiempo real"
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Ingresos totales" value={clp(ingresos)} hint="Ventas, reparaciones y recambios" badge="Comercial" />
+        <Metric
+          label={`Ingresos del mes (${nombreMesCap})`}
+          value={clp(ingresosMesActual)}
+          hint="Total facturado en el mes en curso"
+          badge="Mes actual"
+        />
         <Metric label="Reparaciones en taller" value={String(activas)} hint="Trabajos actualmente en proceso" badge="Operaciones" />
         <Metric label="Deuda con proveedores" value={clp(deuda)} hint="Facturas de compra con saldo" badge="Finanzas" />
         <Metric label="Alertas de stock" value={String(bajoStock.length)} hint="Ítems por debajo del mínimo" badge="Inventario" />

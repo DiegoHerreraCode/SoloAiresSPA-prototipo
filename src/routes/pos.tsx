@@ -52,6 +52,9 @@ function VentaDirectaComponent() {
   const modelosFiltrados = marca ? modelos.filter((m) => m.marca_id === Number(marca)) : modelos;
 
   const items = inventario.filter((i) => {
+    // Si ya está seleccionado en el carrito, no volver a mostrar para evitar duplicar la línea
+    if (cart.some((c) => c.inventario_id === i.inventario_id)) return false;
+
     const mo = modelos.find((m) => m.modelo_id === i.modelo_id);
     if (q && !`${i.sku} ${i.nombre}`.toLowerCase().includes(q.toLowerCase())) return false;
     if (tipo && i.tipo !== tipo) return false;

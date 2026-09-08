@@ -193,7 +193,7 @@ function IngresoReparacion() {
               {items.map((it, idx) => (
                 <div key={idx} className="rounded-2xl border border-border/60 bg-muted/20 p-5 space-y-4">
                   <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                    <span className="text-xs font-semibold text-primary">Pieza N° {idx + 1}</span>
+                    <span className="text-xs font-semibold text-primary">Repuesto N° {idx + 1}</span>
                     {items.length > 1 && (
                       <button
                         type="button"
