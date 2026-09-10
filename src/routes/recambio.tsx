@@ -113,7 +113,7 @@ function RecambioView() {
     serial_entrante: "",
     monto_tasacion_entrante: tasacionInicial,
     monto_extra: montoExtraInicial,
-    costo_adquisicion_entrante: precioVentaSugeridoInicial,
+    costo_adquisicion_entrante: tasacionInicial,
     cantidad: 1,
   });
 
@@ -140,7 +140,7 @@ function RecambioView() {
       monto_venta_saliente: precioVenta,
       monto_tasacion_entrante: nuevaTasacion,
       monto_extra: nuevoExtra,
-      costo_adquisicion_entrante: precioVenta,
+      costo_adquisicion_entrante: nuevaTasacion,
     });
   };
 
@@ -154,13 +154,13 @@ function RecambioView() {
       ...draft,
       monto_venta_saliente: pVenta,
       monto_extra: nuevoExtra,
-      costo_adquisicion_entrante: pVenta, // "El monto de adquisicion del repuesto entrante sera igual al monto de venta del repuesto saliente"
+      costo_adquisicion_entrante: draft.monto_tasacion_entrante,
     });
   };
 
   // Al cambiar la Tasación del repuesto entrante:
-  // "El monto de venta del repuesto saliente sera igual a la tasacion del repuesto entrante + monto economico extra"
-  // Manteniendo el monto extra, se actualiza el monto de venta del repuesto saliente
+  // "El campo costo_adquisicion del repuesto entrante debe tomar automáticamente el valor asignado en el campo monto_tasacion"
+  // Además: monto_venta_saliente = tasacion + monto_extra
   const handleCambioTasacion = (nuevaTasacion: number) => {
     const tas = Math.max(0, nuevaTasacion);
     const nuevoPrecioVenta = tas + draft.monto_extra;
@@ -168,7 +168,7 @@ function RecambioView() {
       ...draft,
       monto_tasacion_entrante: tas,
       monto_venta_saliente: nuevoPrecioVenta,
-      costo_adquisicion_entrante: nuevoPrecioVenta,
+      costo_adquisicion_entrante: tas,
     });
   };
 
@@ -181,7 +181,7 @@ function RecambioView() {
       ...draft,
       monto_extra: ext,
       monto_venta_saliente: nuevoPrecioVenta,
-      costo_adquisicion_entrante: nuevoPrecioVenta,
+      costo_adquisicion_entrante: draft.monto_tasacion_entrante,
     });
   };
 
@@ -448,7 +448,7 @@ function RecambioView() {
                   </Field>
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-tight">
-                  El monto de adquisición del repuesto entrante se asigna exactamente igual al monto de venta del repuesto saliente ({clp(draft.monto_venta_saliente)}).
+                  El monto de adquisición del repuesto entrante toma automáticamente el valor asignado en el monto de tasación ({clp(draft.costo_adquisicion_entrante)}).
                 </p>
               </div>
             </div>
@@ -534,7 +534,7 @@ function RecambioView() {
                       monto_venta_saliente: pVenta,
                       monto_tasacion_entrante: tas,
                       monto_extra: ext,
-                      costo_adquisicion_entrante: pVenta,
+                      costo_adquisicion_entrante: tas,
                       serial_entrante: "",
                     });
                   } else {
