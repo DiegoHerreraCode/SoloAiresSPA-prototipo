@@ -144,7 +144,7 @@ function RecambioView() {
     });
   };
 
-  // Al cambiar el Monto de Venta del repuesto saliente:
+  // Al cambiar el Monto de Venta del repuesto saliente (editable solo por el usuario):
   // monto_venta_saliente = tasacion + monto_extra
   // => ajustamos monto_extra = monto_venta_saliente - tasacion
   const handleCambioMontoVenta = (nuevoPrecioVenta: number) => {
@@ -159,29 +159,30 @@ function RecambioView() {
   };
 
   // Al cambiar la Tasación del repuesto entrante:
-  // "El campo costo_adquisicion del repuesto entrante debe tomar automáticamente el valor asignado en el campo monto_tasacion"
-  // Además: monto_venta_saliente = tasacion + monto_extra
+  // - costo_adquisicion del repuesto entrante toma automáticamente el valor de monto_tasacion
+  // - Solo modifica el monto extra a pagar por el cliente (monto_extra = monto_venta_saliente - tasacion)
+  // - NO modifica el precio de venta (este es solo editable por el usuario)
   const handleCambioTasacion = (nuevaTasacion: number) => {
     const tas = Math.max(0, nuevaTasacion);
-    const nuevoPrecioVenta = tas + draft.monto_extra;
+    const nuevoExtra = Math.max(0, draft.monto_venta_saliente - tas);
     setDraft({
       ...draft,
       monto_tasacion_entrante: tas,
-      monto_venta_saliente: nuevoPrecioVenta,
+      monto_extra: nuevoExtra,
       costo_adquisicion_entrante: tas,
     });
   };
 
   // Al cambiar el Monto Económico Extra:
-  // monto_venta_saliente = tasacion + monto_extra
+  // Si el usuario modifica el monto extra directamente, se ajusta la tasación para mantener el precio de venta
   const handleCambioMontoExtra = (nuevoExtra: number) => {
     const ext = Math.max(0, nuevoExtra);
-    const nuevoPrecioVenta = draft.monto_tasacion_entrante + ext;
+    const nuevaTasacion = Math.max(0, draft.monto_venta_saliente - ext);
     setDraft({
       ...draft,
       monto_extra: ext,
-      monto_venta_saliente: nuevoPrecioVenta,
-      costo_adquisicion_entrante: draft.monto_tasacion_entrante,
+      monto_tasacion_entrante: nuevaTasacion,
+      costo_adquisicion_entrante: nuevaTasacion,
     });
   };
 
