@@ -13,13 +13,14 @@ import {
   nombreModelo,
   repuestos,
   servicios_clientes,
+  variables,
 } from "@/lib/mock-data";
 
 export const Route = createFileRoute("/recambio")({
   head: () => ({
     meta: [
       { title: "Recambio de repuestos — Solo Aire SPA" },
-      { name: "description", content: "Registro de recambio con filtros por marca, modelo y condición, costos entrante y saliente, y cobro inmediato." },
+      { name: "description", content: "Registro de recambio con lógica de tasación de repuesto entrante, monto económico extra y costo de adquisición." },
       { property: "og:title", content: "Recambio de repuestos — Solo Aire SPA" },
       { property: "og:description", content: "Intercambio de repuestos con control de seriales y montos." },
     ],
@@ -28,16 +29,18 @@ export const Route = createFileRoute("/recambio")({
 });
 
 type LineaRecambio = {
-  // Repuesto saliente (de stock físico)
+  // Repuesto saliente (en buen estado / stock propio)
   inventario_saliente_id: number;
   repuesto_saliente_id: number;
   costo_saliente: number;
-  precio_saliente: number;
-  // Repuesto entrante (del cliente que ingresa físicamente a la categoría)
+  monto_venta_saliente: number; // Monto de venta (automático por costo y margen, o tasación + extra)
+  // Repuesto entrante (en mal estado / entregado por cliente)
   inventario_entrante_id: number;
   modelo_entrante_id: number;
   serial_entrante: string;
-  costo_entrante: number;
+  monto_tasacion_entrante: number; // Tasación del repuesto entrante
+  monto_extra: number; // Monto económico extra a cobrar en dinero
+  costo_adquisicion_entrante: number; // = monto_venta_saliente
   cantidad: number;
 };
 
@@ -50,6 +53,23 @@ function RecambioView() {
   const [filtroMarca, setFiltroMarca] = useState("");
   const [filtroModelo, setFiltroModelo] = useState("");
   const [filtroCondicion, setFiltroCondicion] = useState("");
+
+  // Obtener margen y método global de variables
+  const gananciaVar = variables.find((v) => v.tipo === "porcentaje_ganancia");
+  const calcVar = variables.find((v) => v.tipo === "calculo_ganancia");
+  const margenGlobal = Number(gananciaVar?.valor ?? 40);
+  const metodoCalculo = (calcVar?.valor as "sobre_costo" | "sobre_venta") || "sobre_costo";
+
+  // Función helper para calcular precio de venta en base a costo y margen
+  const calcularPrecioVentaSugerido = (costo: number, invMargen?: number) => {
+    const margen = invMargen ?? margenGlobal;
+    if (metodoCalculo === "sobre_costo") {
+      return Math.round(costo * (1 + margen / 100));
+    } else {
+      const ratio = margen / 100;
+      return Math.round(ratio < 1 ? costo / (1 - ratio) : costo);
+    }
+  };
 
   const modelosFiltrados = filtroMarca
     ? modelos.filter((m) => m.marca_id === Number(filtroMarca))
@@ -73,28 +93,95 @@ function RecambioView() {
   const primerRepuesto = repuestosDisponibles[0] || repuestos.find((r) => !r.propietario && r.existe);
   const primerInv = inventario.find((i) => i.inventario_id === primerRepuesto?.inventario_id) || inventario[0]!;
 
+  const costoSalienteInicial = primerRepuesto?.costo_adquisicion || primerInv.monto_compra_prom;
+  const precioVentaSugeridoInicial =
+    primerRepuesto?.monto_venta ||
+    primerInv.monto_venta_unitario ||
+    calcularPrecioVentaSugerido(costoSalienteInicial, primerInv.porcentaje_ganancia);
+
+  // Por defecto, tasación = 50% de la venta y monto extra = 50% restante
+  const tasacionInicial = Math.round(precioVentaSugeridoInicial * 0.5);
+  const montoExtraInicial = precioVentaSugeridoInicial - tasacionInicial;
+
   const [draft, setDraft] = useState<LineaRecambio>({
     inventario_saliente_id: primerInv.inventario_id,
     repuesto_saliente_id: primerRepuesto?.repuesto_id || 1,
-    costo_saliente: primerRepuesto?.costo_adquisicion || primerInv.monto_compra_prom,
-    precio_saliente: primerRepuesto?.monto_venta || primerInv.monto_venta_unitario,
+    costo_saliente: costoSalienteInicial,
+    monto_venta_saliente: precioVentaSugeridoInicial,
     inventario_entrante_id: primerInv.inventario_id,
     modelo_entrante_id: primerInv.modelo_id,
     serial_entrante: "",
-    costo_entrante: 0,
+    monto_tasacion_entrante: tasacionInicial,
+    monto_extra: montoExtraInicial,
+    costo_adquisicion_entrante: precioVentaSugeridoInicial,
     cantidad: 1,
   });
 
+  // Al seleccionar repuesto saliente
   const seleccionarRepuestoSaliente = (repId: number) => {
     const rep = repuestos.find((r) => r.repuesto_id === repId);
     if (!rep) return;
     const inv = inventario.find((i) => i.inventario_id === rep.inventario_id) || primerInv;
+    const costo = rep.costo_adquisicion || inv.monto_compra_prom;
+    const precioVenta =
+      rep.monto_venta ||
+      inv.monto_venta_unitario ||
+      calcularPrecioVentaSugerido(costo, inv.porcentaje_ganancia);
+
+    // Mantener la tasación previa si cabe, o ajustar el monto extra
+    const nuevaTasacion = draft.monto_tasacion_entrante <= precioVenta ? draft.monto_tasacion_entrante : Math.round(precioVenta * 0.5);
+    const nuevoExtra = Math.max(0, precioVenta - nuevaTasacion);
+
     setDraft({
       ...draft,
       repuesto_saliente_id: rep.repuesto_id,
       inventario_saliente_id: inv.inventario_id,
-      costo_saliente: rep.costo_adquisicion || inv.monto_compra_prom,
-      precio_saliente: rep.monto_venta || inv.monto_venta_unitario,
+      costo_saliente: costo,
+      monto_venta_saliente: precioVenta,
+      monto_tasacion_entrante: nuevaTasacion,
+      monto_extra: nuevoExtra,
+      costo_adquisicion_entrante: precioVenta,
+    });
+  };
+
+  // Al cambiar el Monto de Venta del repuesto saliente:
+  // monto_venta_saliente = tasacion + monto_extra
+  // => ajustamos monto_extra = monto_venta_saliente - tasacion
+  const handleCambioMontoVenta = (nuevoPrecioVenta: number) => {
+    const pVenta = Math.max(0, nuevoPrecioVenta);
+    const nuevoExtra = Math.max(0, pVenta - draft.monto_tasacion_entrante);
+    setDraft({
+      ...draft,
+      monto_venta_saliente: pVenta,
+      monto_extra: nuevoExtra,
+      costo_adquisicion_entrante: pVenta, // "El monto de adquisicion del repuesto entrante sera igual al monto de venta del repuesto saliente"
+    });
+  };
+
+  // Al cambiar la Tasación del repuesto entrante:
+  // "El monto de venta del repuesto saliente sera igual a la tasacion del repuesto entrante + monto economico extra"
+  // Manteniendo el monto extra, se actualiza el monto de venta del repuesto saliente
+  const handleCambioTasacion = (nuevaTasacion: number) => {
+    const tas = Math.max(0, nuevaTasacion);
+    const nuevoPrecioVenta = tas + draft.monto_extra;
+    setDraft({
+      ...draft,
+      monto_tasacion_entrante: tas,
+      monto_venta_saliente: nuevoPrecioVenta,
+      costo_adquisicion_entrante: nuevoPrecioVenta,
+    });
+  };
+
+  // Al cambiar el Monto Económico Extra:
+  // monto_venta_saliente = tasacion + monto_extra
+  const handleCambioMontoExtra = (nuevoExtra: number) => {
+    const ext = Math.max(0, nuevoExtra);
+    const nuevoPrecioVenta = draft.monto_tasacion_entrante + ext;
+    setDraft({
+      ...draft,
+      monto_extra: ext,
+      monto_venta_saliente: nuevoPrecioVenta,
+      costo_adquisicion_entrante: nuevoPrecioVenta,
     });
   };
 
@@ -108,7 +195,8 @@ function RecambioView() {
     });
   };
 
-  const subtotal = lineas.reduce((s, l) => s + l.cantidad * l.precio_saliente, 0);
+  // En un recambio, lo que se le cobra en dinero efectivo/tarjeta al cliente es el Monto Económico Extra
+  const subtotal = lineas.reduce((s, l) => s + l.cantidad * l.monto_extra, 0);
   const iva = Math.round((subtotal * IVA) / 100);
   const total = subtotal + iva;
 
@@ -131,6 +219,34 @@ function RecambioView() {
       comprobante: null,
       last_update: new Date().toISOString().slice(0, 10),
     };
+
+    // Marcar repuestos salientes como no existentes o transferidos
+    // e ingresar repuestos entrantes con costo_adquisicion = monto_venta_saliente y estado pendiente_reparacion
+    lineas.forEach((l, idx) => {
+      const repSal = repuestos.find((r) => r.repuesto_id === l.repuesto_saliente_id);
+      if (repSal) {
+        repSal.existe = false;
+      }
+
+      // Ingresar el nuevo repuesto físico recibido del cliente (en mal estado)
+      const nuevoRepId = Math.max(0, ...repuestos.map((r) => r.repuesto_id)) + 1 + idx;
+      const invEnt = inventario.find((i) => i.inventario_id === l.inventario_entrante_id);
+      repuestos.push({
+        repuesto_id: nuevoRepId,
+        inventario_id: l.inventario_entrante_id,
+        detalle_compra_id: null,
+        serial: l.serial_entrante || `RC-IN-${nuevoRepId}`,
+        nombre: invEnt ? `${invEnt.nombre} (Recambio cliente)` : "Repuesto entrante",
+        estado: "pendiente_reparacion", // Entra en mal estado
+        propietario: false, // Pasa a ser propiedad de Solo Aire SPA
+        existe: true,
+        costo_adquisicion: l.costo_adquisicion_entrante, // = monto_venta_saliente
+        costo_reparacion: 0,
+        costo_total: l.costo_adquisicion_entrante,
+        monto_venta: 0,
+        utilidad: 0,
+      });
+    });
 
     servicios_clientes.unshift(nuevoServicio);
 
@@ -167,71 +283,77 @@ function RecambioView() {
             </Field>
           </div>
 
-          {/* Sección 1: Filtros y selección de repuesto saliente */}
-          <div className="rounded-2xl border border-border/50 bg-muted/20 p-5 space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                <ArrowRightLeft className="h-4 w-4" />
-              </div>
+          {/* Diagrama visual interactivo de la lógica del proceso de recambio */}
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-border/50 pb-3">
               <div>
-                <p className="text-sm font-semibold text-foreground">1. Repuesto Saliente (Stock de Solo Aire SPA)</p>
-                <p className="text-xs text-muted-foreground">Repuesto entregado al cliente</p>
+                <p className="text-sm font-semibold text-foreground">Lógica del Proceso de Recambio</p>
+                <p className="text-xs text-muted-foreground">
+                  Monto de Venta Saliente = Tasación Entrante + Monto Económico Extra
+                </p>
               </div>
+              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary w-fit">
+                Margen global activo: {margenGlobal}% ({metodoCalculo.replace("_", " ")})
+              </span>
             </div>
 
-            {/* Filtros rápidos */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-              <Field label="Filtrar por Marca">
-                <select
-                  className={inputCls}
-                  value={filtroMarca}
-                  onChange={(e) => {
-                    setFiltroMarca(e.target.value);
-                    setFiltroModelo("");
-                  }}
-                >
-                  <option value="">Todas las marcas</option>
-                  {marcas.map((m) => (
-                    <option key={m.marca_id} value={m.marca_id}>
-                      {m.nombre}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            {/* Cuadros comparativos Repuesto Saliente vs Repuesto Entrante */}
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Bloque Repuesto Saliente (En buen estado) */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                      S
+                    </span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200">
+                      Repuesto Saliente
+                    </span>
+                  </div>
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    En buen estado
+                  </span>
+                </div>
 
-              <Field label="Filtrar por Modelo">
-                <select
-                  className={inputCls}
-                  value={filtroModelo}
-                  onChange={(e) => setFiltroModelo(e.target.value)}
-                >
-                  <option value="">Todos los modelos</option>
-                  {modelosFiltrados.map((m) => (
-                    <option key={m.modelo_id} value={m.modelo_id}>
-                      {m.nombre}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+                {/* Filtros rápidos */}
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Marca">
+                    <select
+                      className={`${inputCls} text-xs`}
+                      value={filtroMarca}
+                      onChange={(e) => {
+                        setFiltroMarca(e.target.value);
+                        setFiltroModelo("");
+                      }}
+                    >
+                      <option value="">Todas</option>
+                      {marcas.map((m) => (
+                        <option key={m.marca_id} value={m.marca_id}>
+                          {m.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              <Field label="Filtrar por Condición">
-                <select
-                  className={inputCls}
-                  value={filtroCondicion}
-                  onChange={(e) => setFiltroCondicion(e.target.value)}
-                >
-                  <option value="">Todas</option>
-                  <option value="nuevo">Nuevo</option>
-                  <option value="usado">Usado / Reacondicionado</option>
-                </select>
-              </Field>
-            </div>
+                  <Field label="Modelo">
+                    <select
+                      className={`${inputCls} text-xs`}
+                      value={filtroModelo}
+                      onChange={(e) => setFiltroModelo(e.target.value)}
+                    >
+                      <option value="">Todos</option>
+                      {modelosFiltrados.map((m) => (
+                        <option key={m.modelo_id} value={m.modelo_id}>
+                          {m.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="sm:col-span-3">
-                <Field label="Seleccionar unidad física saliente (Serial en Stock)">
+                <Field label="Unidad física en stock (Serial)">
                   <select
-                    className={`${inputCls} font-mono`}
+                    className={`${inputCls} font-mono text-xs`}
                     value={draft.repuesto_saliente_id}
                     onChange={(e) => seleccionarRepuestoSaliente(Number(e.target.value))}
                   >
@@ -245,184 +367,270 @@ function RecambioView() {
                     })}
                   </select>
                 </Field>
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <Field label="Costo de adquisición de stock">
+                    <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs font-mono text-muted-foreground">
+                      {clp(draft.costo_saliente)}
+                    </div>
+                  </Field>
+
+                  <Field label="Monto de Venta">
+                    <input
+                      type="number"
+                      min={0}
+                      className={`${inputCls} font-semibold text-emerald-700 dark:text-emerald-300`}
+                      value={draft.monto_venta_saliente}
+                      onChange={(e) => handleCambioMontoVenta(Number(e.target.value))}
+                    />
+                  </Field>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Se carga automáticamente el precio sugerido en función de su costo y el margen definido. Al modificarlo, se recalcula el monto extra.
+                </p>
               </div>
 
-              <Field label="Costo del repuesto saliente (editable)">
-                <input
-                  type="number"
-                  className={inputCls}
-                  value={draft.costo_saliente}
-                  onChange={(e) => setDraft({ ...draft, costo_saliente: Number(e.target.value) })}
-                />
-              </Field>
+              {/* Bloque Repuesto Entrante (En mal estado) */}
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-500/20 text-rose-700 dark:text-rose-300 text-xs font-bold">
+                      E
+                    </span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-rose-800 dark:text-rose-200">
+                      Repuesto Entrante
+                    </span>
+                  </div>
+                  <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:text-rose-300">
+                    En mal estado
+                  </span>
+                </div>
 
-              <Field label="Precio a cobrar al cliente">
-                <input
-                  type="number"
-                  className={inputCls}
-                  value={draft.precio_saliente}
-                  onChange={(e) => setDraft({ ...draft, precio_saliente: Number(e.target.value) })}
-                />
-              </Field>
+                <Field label="Categoría / Modelo físico entrante">
+                  <select
+                    className={`${inputCls} text-xs`}
+                    value={draft.inventario_entrante_id}
+                    onChange={(e) => seleccionarInventarioEntrante(Number(e.target.value))}
+                  >
+                    {inventario.map((i) => (
+                      <option key={i.inventario_id} value={i.inventario_id}>
+                        {i.nombre} ({marcaDeModelo(i.modelo_id)} - {nombreModelo(i.modelo_id)})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
 
-              <Field label="Cantidad">
-                <input
-                  type="number"
-                  min={1}
-                  className={inputCls}
-                  value={draft.cantidad}
-                  onChange={(e) => setDraft({ ...draft, cantidad: Number(e.target.value) })}
-                />
-              </Field>
+                <Field label="Serial único del repuesto entrante">
+                  <input
+                    required
+                    className={`${inputCls} font-mono text-xs`}
+                    placeholder="Ej: CMP-CLI-9948"
+                    value={draft.serial_entrante}
+                    onChange={(e) => setDraft({ ...draft, serial_entrante: e.target.value })}
+                  />
+                </Field>
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <Field label="Monto de Tasación">
+                    <input
+                      type="number"
+                      min={0}
+                      className={inputCls}
+                      value={draft.monto_tasacion_entrante}
+                      onChange={(e) => handleCambioTasacion(Number(e.target.value))}
+                    />
+                  </Field>
+
+                  <Field label="Costo de adquisición entrante">
+                    <div className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs font-mono font-bold text-foreground">
+                      {clp(draft.costo_adquisicion_entrante)}
+                    </div>
+                  </Field>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  El monto de adquisición del repuesto entrante se asigna exactamente igual al monto de venta del repuesto saliente ({clp(draft.monto_venta_saliente)}).
+                </p>
+              </div>
             </div>
-          </div>
 
-          {/* Sección 2: Repuesto entrante del cliente */}
-          <div className="rounded-lg border border-border bg-muted/20 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Repeat className="h-4 w-4 text-emerald-600" />
-              <p className="text-sm font-semibold">2. Repuesto Entrante (Entregado por el Cliente)</p>
+            {/* Bloque central: Monto Económico Extra */}
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <Repeat className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-primary">
+                      Monto Económico Extra (Diferencial a Cobrar)
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Monto en dinero que el cliente paga para cubrir la diferencia:{" "}
+                    <span className="font-semibold text-foreground">
+                      {clp(draft.monto_venta_saliente)} (Venta) − {clp(draft.monto_tasacion_entrante)} (Tasación) = {clp(draft.monto_extra)}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="w-full sm:w-56">
+                  <Field label="Monto extra">
+                    <input
+                      type="number"
+                      min={0}
+                      className={`${inputCls} font-bold text-base text-primary`}
+                      value={draft.monto_extra}
+                      onChange={(e) => handleCambioMontoExtra(Number(e.target.value))}
+                    />
+                  </Field>
+                </div>
+              </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Categoría en inventario (Modelo físico)">
-                <select
-                  className={inputCls}
-                  value={draft.inventario_entrante_id}
-                  onChange={(e) => seleccionarInventarioEntrante(Number(e.target.value))}
-                >
-                  {inventario.map((i) => (
-                    <option key={i.inventario_id} value={i.inventario_id}>
-                      {i.nombre} ({marcaDeModelo(i.modelo_id)} - {nombreModelo(i.modelo_id)})
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            {/* Fila de cantidad y botón Agregar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border/40">
+              <div className="flex items-center gap-4">
+                <div className="w-28">
+                  <Field label="Cantidad">
+                    <input
+                      type="number"
+                      min={1}
+                      className={inputCls}
+                      value={draft.cantidad}
+                      onChange={(e) => setDraft({ ...draft, cantidad: Math.max(1, Number(e.target.value)) })}
+                    />
+                  </Field>
+                </div>
+                <div className="text-xs">
+                  <p className="text-muted-foreground">Cobro total de la línea (neto):</p>
+                  <p className="text-base font-bold text-foreground">{clp(draft.cantidad * draft.monto_extra)}</p>
+                </div>
+              </div>
 
-              <Field label="Serial único del repuesto entrante">
-                <input
-                  required
-                  className={`${inputCls} font-mono`}
-                  placeholder="Ej: CMP-CLI-9948"
-                  value={draft.serial_entrante}
-                  onChange={(e) => setDraft({ ...draft, serial_entrante: e.target.value })}
-                />
-              </Field>
+              <button
+                className={btnPrimary}
+                disabled={!draft.serial_entrante.trim() || repuestosDisponibles.length === 0}
+                onClick={() => {
+                  const nuevasLineas = [...lineas, draft];
+                  setLineas(nuevasLineas);
 
-              <Field label="Costo de tasación / ingreso entrante">
-                <input
-                  type="number"
-                  min={0}
-                  className={inputCls}
-                  value={draft.costo_entrante}
-                  onChange={(e) => setDraft({ ...draft, costo_entrante: Number(e.target.value) })}
-                />
-              </Field>
+                  // Encontrar el siguiente repuesto disponible
+                  const siguiente = repuestos.find(
+                    (r) => !r.propietario && r.existe && !nuevasLineas.some((l) => l.repuesto_saliente_id === r.repuesto_id)
+                  );
+                  if (siguiente) {
+                    const invSig = inventario.find((i) => i.inventario_id === siguiente.inventario_id) || primerInv;
+                    const cSal = siguiente.costo_adquisicion || invSig.monto_compra_prom;
+                    const pVenta =
+                      siguiente.monto_venta ||
+                      invSig.monto_venta_unitario ||
+                      calcularPrecioVentaSugerido(cSal, invSig.porcentaje_ganancia);
+                    const tas = Math.round(pVenta * 0.5);
+                    const ext = pVenta - tas;
+
+                    setDraft({
+                      ...draft,
+                      repuesto_saliente_id: siguiente.repuesto_id,
+                      inventario_saliente_id: invSig.inventario_id,
+                      costo_saliente: cSal,
+                      monto_venta_saliente: pVenta,
+                      monto_tasacion_entrante: tas,
+                      monto_extra: ext,
+                      costo_adquisicion_entrante: pVenta,
+                      serial_entrante: "",
+                    });
+                  } else {
+                    setDraft({ ...draft, serial_entrante: "" });
+                  }
+                }}
+              >
+                Agregar al recambio
+              </button>
             </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <p className="text-sm text-muted-foreground">
-              Total de la línea:{" "}
-              <span className="font-bold text-foreground">{clp(draft.cantidad * draft.precio_saliente)}</span>
-            </p>
-            <button
-              className={btnPrimary}
-              disabled={!draft.serial_entrante.trim() || repuestosDisponibles.length === 0}
-              onClick={() => {
-                const nuevasLineas = [...lineas, draft];
-                setLineas(nuevasLineas);
-                
-                // Encontrar el siguiente repuesto disponible
-                const siguiente = repuestos.find(
-                  (r) => !r.propietario && r.existe && !nuevasLineas.some((l) => l.repuesto_saliente_id === r.repuesto_id)
-                );
-                if (siguiente) {
-                  const invSig = inventario.find((i) => i.inventario_id === siguiente.inventario_id) || primerInv;
-                  setDraft({
-                    ...draft,
-                    repuesto_saliente_id: siguiente.repuesto_id,
-                    inventario_saliente_id: invSig.inventario_id,
-                    costo_saliente: siguiente.costo_adquisicion || invSig.monto_compra_prom,
-                    precio_saliente: siguiente.monto_venta || invSig.monto_venta_unitario,
-                    serial_entrante: "",
-                  });
-                } else {
-                  setDraft({ ...draft, serial_entrante: "" });
-                }
-              }}
-            >
-              Agregar al recambio
-            </button>
           </div>
         </Card>
 
         {/* Resumen lateral */}
-        <Card className="p-4 h-fit">
-          <p className="text-sm font-semibold border-b border-border pb-2.5">Detalle del Recambio</p>
-          <ul className="mt-3 divide-y divide-border text-sm">
+        <Card className="p-5 h-fit space-y-4">
+          <div className="border-b border-border/50 pb-3">
+            <p className="text-sm font-semibold text-foreground">Detalle del Recambio</p>
+            <p className="text-xs text-muted-foreground">Resumen de intercambio y cobro diferencial</p>
+          </div>
+
+          <ul className="divide-y divide-border/60 text-sm">
             {lineas.map((l, idx) => {
               const invSaliente = inventario.find((i) => i.inventario_id === l.inventario_saliente_id);
               const invEntrante = inventario.find((i) => i.inventario_id === l.inventario_entrante_id);
 
               return (
-                <li key={idx} className="space-y-1 py-2.5">
+                <li key={idx} className="space-y-2 py-3">
                   <div className="flex items-start justify-between">
-                    <p className="font-medium text-xs">
-                      Entrega: <span className="text-blue-600 font-semibold">{invSaliente?.nombre}</span>
-                    </p>
+                    <div>
+                      <p className="text-xs font-semibold text-foreground">
+                        Saliente: <span className="text-emerald-600 dark:text-emerald-400">{invSaliente?.nombre}</span>
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Venta: {clp(l.monto_venta_saliente)}
+                      </p>
+                    </div>
                     <button
-                      className="text-muted-foreground hover:text-destructive p-0.5"
+                      className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors cursor-pointer"
                       onClick={() => setLineas(lineas.filter((_, i) => i !== idx))}
                       title="Eliminar"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground font-mono">
-                    Entra: {invEntrante?.nombre} (Serial: {l.serial_entrante || "s/n"})
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Costo saliente: {clp(l.costo_saliente)} | Costo entrante: {clp(l.costo_entrante)}
-                  </p>
+
+                  <div className="rounded-lg bg-muted/40 p-2.5 space-y-1 text-[11px]">
+                    <p className="text-muted-foreground font-mono">
+                      Entrante: <span className="text-foreground font-medium">{invEntrante?.nombre}</span> (S/N: {l.serial_entrante || "s/n"})
+                    </p>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Tasación: {clp(l.monto_tasacion_entrante)}</span>
+                      <span>Monto extra: {clp(l.monto_extra)}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground pt-0.5 border-t border-border/40">
+                      Costo adquisición entrante: <span className="font-semibold text-foreground">{clp(l.costo_adquisicion_entrante)}</span>
+                    </p>
+                  </div>
+
                   <div className="flex justify-between items-center text-xs font-semibold pt-1">
-                    <span>{l.cantidad} × {clp(l.precio_saliente)}</span>
-                    <span className="text-foreground tabular-nums">{clp(l.cantidad * l.precio_saliente)}</span>
+                    <span className="text-muted-foreground">{l.cantidad} × Monto extra {clp(l.monto_extra)}</span>
+                    <span className="text-primary tabular-nums font-bold">{clp(l.cantidad * l.monto_extra)}</span>
                   </div>
                 </li>
               );
             })}
             {lineas.length === 0 && (
-              <li className="py-6 text-center text-muted-foreground text-xs">
-                Agrega al menos una línea de recambio.
+              <li className="py-8 text-center text-muted-foreground text-xs">
+                No hay líneas añadidas al recambio aún.
               </li>
             )}
           </ul>
 
-          <dl className="mt-4 space-y-1.5 border-t border-border pt-3 text-sm">
+          <dl className="space-y-2 border-t border-border/60 pt-3 text-xs">
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Subtotal</dt>
-              <dd className="tabular-nums font-medium">{clp(subtotal)}</dd>
+              <dt className="text-muted-foreground">Subtotal diferencial (neto):</dt>
+              <dd className="tabular-nums font-medium text-foreground">{clp(subtotal)}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">IVA ({IVA}%)</dt>
-              <dd className="tabular-nums font-medium">{clp(iva)}</dd>
+              <dt className="text-muted-foreground">IVA ({IVA}%):</dt>
+              <dd className="tabular-nums font-medium text-foreground">{clp(iva)}</dd>
             </div>
-            <div className="flex justify-between border-t border-border pt-1.5 text-base font-bold">
-              <dt>Total a pagar</dt>
-              <dd className="tabular-nums text-primary">{clp(total)}</dd>
+            <div className="flex justify-between border-t border-border/60 pt-2 text-sm font-bold">
+              <dt className="text-foreground">Total a pagar al instante:</dt>
+              <dd className="tabular-nums text-primary text-base">{clp(total)}</dd>
             </div>
           </dl>
 
           <button
-            className={`${btnPrimary} mt-4 w-full`}
+            className={`${btnPrimary} w-full justify-center py-2.5 shadow-xs`}
             disabled={lineas.length === 0}
             onClick={registrarRecambio}
           >
             Registrar recambio y pagar al instante
           </button>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Los recambios deben ser pagados al instante. Se abrirá la vista de pago.
+          <p className="text-center text-[11px] text-muted-foreground">
+            El recambio requiere pago inmediato del monto extra. Se abrirá la pasarela de pago.
           </p>
         </Card>
       </div>
